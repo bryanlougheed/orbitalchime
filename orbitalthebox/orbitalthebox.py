@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import os
+import warnings
 #import matplotlib.pyplot as plt
 
 def getlaskar2004(option=1, timeslice=(-np.inf, np.inf)):
@@ -18,8 +19,10 @@ def getlaskar2004(option=1, timeslice=(-np.inf, np.inf)):
         option = 3, 101 Ma to 0 Ma
         option = 4, 249 Ma to 0 Ma
         option = 5, 51 Ma to 21 Ma in the future (concatenate options 1 & 2)
-    timeslice : array-like, containing one or two values
-        If one value, a single time interval. If two values, minimum and maximum time interval (in ka before 2000 CE)
+
+    timeslice : array-like
+        Contains one or two values (in ka before 2000 CE, negative values = future from 2000 CE)
+        If one value, a single time interval. If two values, all time intervals between the two values.
         If not given, all time slices in the dataset will be returned.
 
     Returns
@@ -234,8 +237,9 @@ def sollon2time(sollon, ecc, lpe, tottime=365.24, obl=None):
         Either 1 value (used as constant if other inputs are vector), or a vector of values.
     ecc : array-like
         Eccentricity (e.g., from Laskar et al.)
-    lpe : arriay-like
-        Heliocentric longitude of perihelion (a.k.a omega-bar) in radians (e.g., from Laskar et al.)
+    lpe : ndarray
+        heliocentric longitude of perihelion (from e.g., Laskar et al.)
+        omega (i.e., relative to NH autumn equinox) in radians.
     tottime : float
         Total time in the year, single value, any time unit you want. Default value is 365.24.
     obl : array-like, optional
@@ -259,7 +263,7 @@ def sollon2time(sollon, ecc, lpe, tottime=365.24, obl=None):
     
     See following for background, as well as comments in the script:
     J. Meeus, (1998). Astronomical Algorithms, 2nd ed. Willmann-Bell, Inc., Richmond, Virginia. (specifically Chapter 30).
-    https://dr-phill-edwards.eu/Science/EOT.html (for equation of time)
+    Also: https://dr-phill-edwards.eu/Science/EOT.html (for equation of time)
     """
 
     # Change lpe from heliocentric to geocentric
@@ -322,7 +326,8 @@ def time2sollon(time, ecc, lpe, tottime=365.24, obl=None, floatpp=64):
     ecc : ndarray
         Eccentricity (e.g., from Laskar et al.)
     lpe : ndarray
-        Heliocentric longitude of perihelion (a.k.a omega-bar) in radians (e.g., from Laskar et al.)
+        heliocentric longitude of perihelion (from e.g., Laskar et al.)
+        omega (i.e., relative to NH autumn equinox) in radians.
     tottime : float
         Total time in the year corresponding to 'time', single value, any time unit you want. Default value is 365.24.
     obl : ndarray, optional
@@ -456,8 +461,9 @@ def dailymeanwm2(lat, sollon, ecc, obl, lpe, con=1361, earthshape='sphere'):
         Eccentricity. Numerical value(s). 1D array.
     obl : array-like
         Obliquity. Numerical value(s), radians. 1D array.
-    lpe : array-like
-        Longitude of perihelion from moving equinox (omega-bar). Numerical value(s), radians. 1D array.
+    lpe : ndarray
+        heliocentric longitude of perihelion (from e.g., Laskar et al.)
+        omega (i.e., relative to NH autumn equinox) in radians.
     con : float or array-like, optional
         Solar constant in W/m². Single numerical value or 1D array. Default is 1361 W/m².
     earthshape : str, optional
@@ -485,12 +491,8 @@ def dailymeanwm2(lat, sollon, ecc, obl, lpe, con=1361, earthshape='sphere'):
     Python 3.12.4, numpy 1.26.4.
 
     irr in Wm² based on equations in Berger (1978).
-    Berger, AL. 1978. "Long-Term Variations of Daily Insolation and Quaternary Climatic Changes."
+    Berger, A.L. 1978. "Long-Term Variations of Daily Insolation and Quaternary Climatic Changes."
     J. Atmos. Sci., 35: 2362-2367.
- 
-    Part of script (specifically polar night and day) uses Ian Eisenman's
-    Matlabification of Berger (1978) equations 8 and 9 (see comments in script)
-    taken from here: http://eisenman.ucsd.edu/code/daily_insolation.m
     
     I added ability to take oblateness of Earth into account, validated against Van Hemelrijck (1983) solution. (see comments in script)
     
@@ -500,55 +502,95 @@ def dailymeanwm2(lat, sollon, ecc, obl, lpe, con=1361, earthshape='sphere'):
     I added tsi by calculating distance from sun following Meeus (1998).
     Meeus, J., (1998). Astronomical Algorithms, 2nd ed. Willmann-Bell, Inc., Richmond, Virginia. (specifically Chapter 30)    
     """
+    # numpy everything just to be sure
+    lat = np.array(lat)
+    sollon = np.array(sollon)
+    ecc = np.array(ecc)
+    obl = np.array(obl)
+    lpe = np.array(lpe)
+    con = np.array(con)
+    
+    # Check for NaN in input
+    checklist = {"lat": lat, "sollon": sollon, "ecc": ecc, "obl": obl, "lpe": lpe, "con": con}
+    for name, array in checklist.items():
+        if np.isnan(array).any():
+            warnings.warn(f"Inputted {name} contains NaN, which could cause erroneous calculations", UserWarning)
 
-    # Declination angle of the sun
-    # https://en.wikipedia.org/wiki/Position_of_the_Sun
-    dsun = np.arcsin(np.sin(obl) * np.sin(sollon))
+    ### Calculate rx and tsi
+    omegabar = np.array(lpe + np.pi)  # add 180 degrees. (heliocentric to geocentric)
+    omegabar[omegabar >= 2*np.pi] -= 2*np.pi  # put back in 0-360 range
+    veq = 2*np.pi - omegabar  # v (true anomaly) of spring equinox relative to perihelion
+    vx = np.array(veq + sollon)  # v (true anomaly) of inputted sollon relative to perihelion
+    vx[vx > 2*np.pi] -= 2*np.pi  # put back in 0-360 range
+    rx = (1 - ecc**2) / (1 + ecc * np.cos(vx))  # Distance from Sun in AU, Eq. 30.3 in Meeus (1998)
+    tsi = con * (1 / rx)**2 # Total solar irradiance at distance rx
 
-    if earthshape == 'sphere':
-        # geographic latitude = geocentric latitude
-        pass
-    elif earthshape == 'wgs84':
-        lat = geographiclat(lat)
-        dsun = geographiclat(dsun)
+    if earthshape == 'sphere' or earthshape == 'wgs84':
+
+        if earthshape == 'wgs84':
+            lat = geographiclat(lat)
+ 
+        # Declination angle of the sun
+        # https://en.wikipedia.org/wiki/Position_of_the_Sun
+        dsun = np.arcsin(np.sin(obl) * np.sin(sollon))
+
+        #if earthshape == 'wgs84':
+        #    dsun = geographiclat(dsun)
+
+        # Hour angle at sunrise/sunset
+        # https://en.wikipedia.org/wiki/Sunrise_equation
+        # Invalid input to arccos caused by polar day or polar night will return NaN. 
+        # NaN output warning supressed here.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            hangle = np.arccos(-np.tan(lat) * np.tan(dsun))
+        
+        # Put hangle pi for polar day and zero for polar night (the NaN values in hangle)
+        # If lat*dsun is >0 then polar region and an subsolar point are both in same hemisphere --> polar day
+        # https://en.wikipedia.org/wiki/Hour_angle
+        hangle[np.logical_and(np.isnan(hangle), lat*dsun > 0)] = np.pi  # polar day
+        hangle[np.logical_and(np.isnan(hangle), lat*dsun <= 0)] = 0    # polar night
+        
+        # Hours of daylight (https://en.wikipedia.org/wiki/Sunrise_equation)
+        dayhrs = np.abs(hangle - hangle*-1) / (2*np.pi / 24)
+
+        # 24 hr mean irradiance: Berger (1978) eq (10)
+        # Omit the 86.4 factor included in Berger's eq (10), which is a conversion factor for W to kJ (60*60*24/1000)
+        # You could also use Berger eq (8) and eq (9) for polar day and night
+        # However, here, hangle = pi is inputted for (polar day) and hangle = 0 for polar night into Eq (10),
+        # thus facilitating vecotorised programming. It gives the same irr output for polar day and night as following
+        # Berger eqs (8) and (9) separately for polar day and night
+        irr = (tsi/np.pi) * ( hangle * np.sin(lat) * np.sin(dsun) + np.cos(lat) * np.cos(dsun) * np.sin(hangle))
+
+    elif earthshape == 'vanh':
+     
+        # Van Hemelrijck (1983) extended method for oblate Earth
+        # produces exact same output as inputting geographic latitude into 
+        # Berger equation for spherical Earth, which seems easier..
+
+        # Declination angle of the sun
+        # https://en.wikipedia.org/wiki/Position_of_the_Sun
+        dsun = np.arcsin(np.sin(obl) * np.sin(sollon))
+        # Hour angle at sunrise/sunset
+        # https://en.wikipedia.org/wiki/Sunrise_equation
+        # use geogrpaphic lat following Van Hemelrijck
+        gglat = geographiclat(lat)
+        hangle = np.arccos(np.tan(gglat) * -np.tan(dsun))
+
+        # https://en.wikipedia.org/wiki/Hour_angle
+        hangle[np.logical_and(np.isnan(hangle), lat*dsun > 0)] = np.pi  # polar day
+        hangle[np.logical_and(np.isnan(hangle), lat*dsun <= 0)] = 0    # polar night
+        
+        # Hours of daylight (https://en.wikipedia.org/wiki/Sunrise_equation)
+        dayhrs = np.abs(hangle - hangle*-1) / (2*np.pi / 24)
+      
+        f = 1 / 298.257223563 # wgs84 flattening
+        vangle = np.arctan((1 - f)**-2 * np.tan(lat)) - lat  # Van Hemelrijck (1983) eq. 9, f is wgs84 flattening
+        irr = (tsi * 1 / np.pi) * (np.cos(vangle) * (hangle * np.sin(lat) * np.sin(dsun) + np.sin(hangle) * np.cos(lat) * np.cos(dsun)) + np.sin(vangle) * (-np.tan(lat) * (hangle * np.sin(lat) * np.sin(dsun) + np.sin(hangle) * np.cos(lat) * np.cos(dsun)) + hangle * np.sin(dsun) / np.cos(lat)))
+           
     else:
         raise ValueError('earthshape '+earthshape+' unrecognised')
 
-    # Hour angle at sunrise/sunset
-    # https://en.wikipedia.org/wiki/Sunrise_equation
-    hangle = np.arccos(-np.tan(lat) * np.tan(dsun))
-
-    # polar night / day. Berger (1978), eq. 8 and 9
-    # following two lines come from Ian Eisenman Matlab script of equations 8 and 9
-    # numpy prefers np.logical_and here
-    hangle[np.logical_and(np.abs(lat) >= np.pi / 2 - np.abs(dsun), lat * dsun > 0)] = np.pi  # polar day
-    hangle[np.logical_and(np.abs(lat) >= np.pi / 2 - np.abs(dsun), lat * dsun <= 0)] = 0    # polar night
-
-    # Hours of daylight (https://en.wikipedia.org/wiki/Sunrise_equation)
-    dayhrs = np.abs(hangle - hangle*-1) / (2*np.pi / 24)
-
-    # Change lpe from heliocentric to geocentric (omega-bar to omega)
-    omega = np.array(lpe + np.pi)  # add 180 degrees
-    omega[omega >= 2*np.pi] -= 2*np.pi  # subtract 360 degrees from stuff >= 360 degrees
-
-    # # Van Hemelrijck (1983) extended method for oblate Earth
-    # if earthshape == 'wgs84'
-    #     vangle = np.arctan((1 - f)**-2 * np.tan(lat)) - lat  # Van Hemelrijck (1983) eq. 9, f is wgs84 flattening
-    #     # Van Hemelrijck (1983) eq. 11 second term
-    #     hemelterm = (np.cos(vangle) * (hangle * np.sin(lat) * np.sin(dsun) + np.sin(hangle) * np.cos(lat) * np.cos(dsun)) + np.sin(vangle) * (-np.tan(lat) * (hangle * np.sin(lat) * np.sin(dsun) + np.sin(hangle) * np.cos(lat) * np.cos(dsun)) + hangle * np.sin(dsun) / np.cos(lat)))
-    #     # Irradiation: Berger (1978) eq. 10, but replace final term with Van Hemelrijck (1983) eq. 11 second term
-    #     irr = con / np.pi * (1 + ecc * np.cos(sollon - omega))**2 / (1 - ecc**2)**2 * hemelterm
-    # # produces exact same output as simply inputting geographic latitude into Berger equation below, which seems easier.. 
-
-    # 24 hr mean irradiance: Berger (1978) eq (10)
-    irr = con / np.pi * (1 + ecc * np.cos(sollon - omega))**2 / (1 - ecc**2)**2 * ( hangle * np.sin(lat) * np.sin(dsun) + np.cos(lat) * np.cos(dsun) * np.sin(hangle))
-
-    # Calculate rx and tsi
-    veq = 2*np.pi - omega  # v (true anomaly) of spring equinox relative to perihelion
-    vx = veq + sollon  # v (true anomaly) of inputted sollon relative to perihelion
-    vx[vx > 2*np.pi] -= 2*np.pi  # put back in 0-360 range
-    rx = (1 - ecc**2) / (1 + ecc * np.cos(vx))  # Eq. 30.3 in Meeus (1998)
-    tsi = con * (1 / rx)**2  
 
     return irr, dayhrs, rx, tsi
 
@@ -571,7 +613,7 @@ def intradaywm2(lat, ecc, obl, lpe, con=1361.0, daysinyear=365.240, dayres=0.001
         obliquity in radians (from, e.g., Laskar et al.)
     lpe : ndarray
         heliocentric longitude of perihelion (from e.g., Laskar et al.)
-        omega-bar (i.e., relative to NH autumn equinox) in radians.
+        omega (i.e., relative to NH autumn equinox) in radians.
     con : float
         solar constant in W/m², default is 1361 W/m²
     daysinyear : float
@@ -599,7 +641,7 @@ def intradaywm2(lat, ecc, obl, lpe, con=1361.0, daysinyear=365.240, dayres=0.001
     con = np.array([con])
 
     # day length in hours (placeholder for future development)
-    # has not been properly implemented yet for day lengths other than 24
+    # has not been properly implemented/tested yet for day lengths other than 24
     dlen = 24 
     
     # Create time series of mean solar day fractions
@@ -626,10 +668,10 @@ def intradaywm2(lat, ecc, obl, lpe, con=1361.0, daysinyear=365.240, dayres=0.001
     elev = np.arcsin(np.sin(dsun) * np.sin(lat) + np.cos(dsun) * np.cos(lat) * np.cos(hangles))
 
     # Calculate distance from Sun in AU
-    omega = lpe + np.pi
-    veq = 2 * np.pi - omega  # v (true anomaly) of NH spring equinox relative to perihelion
+    omegabar = lpe + np.pi
+    veq = 2*np.pi - omegabar  # v (true anomaly) of NH spring equinox relative to perihelion
     vx = veq + sunlon  # v (true anomaly) of inputted sunlon relative to perihelion
-    vx[vx > 2*np.pi] -= 2 * np.pi  # put back in 0-360 range
+    vx[vx > 2*np.pi] -= 2*np.pi  # put back in 0-360 range
     rx = (1 - ecc**2) / (1 + ecc * np.cos(vx))  # Eq. 30.3 in Meeus (1998)
 
     # Calculate tsi as function of con relative to 1 AU
@@ -637,7 +679,7 @@ def intradaywm2(lat, ecc, obl, lpe, con=1361.0, daysinyear=365.240, dayres=0.001
 
     # Calculate W/m2, vertical component of tsi
     irr = tsi * np.sin(elev)
-    irr[irr < 0] = 0  # sun under horizon, night time
+    irr[elev < 0] = 0  # sun under horizon, night time
 
     return irr, days, dayhr
 
@@ -647,7 +689,7 @@ def thresholdjm2(thresh, lat, ecc, obl, lpe, con=1361, timeres=0.01, tottime=365
 
     Calculate integrated irradiation (J/m²) at top of atmosphere for all day intervals 
     exceeding a certain threshold in mean daily irradiance (W/m²).
-    Can be used to emulate analysis by Huybers (2006; 10.1126/science.1125249)
+    Can be used to emulate analysis by, e.g., Huybers (2006; 10.1126/science.1125249)
     
     Parameters
     ----------
@@ -663,8 +705,9 @@ def thresholdjm2(thresh, lat, ecc, obl, lpe, con=1361, timeres=0.01, tottime=365
         Eccentricity. Numerical value(s). 1D array.
     obl : array-like
         Obliquity. Numerical value(s), radians. 1D array.
-    lpe : array-like
-        Longitude of perihelion from moving equinox. (omega-bar) Numerical value(s), radians. 1D array.
+    lpe : ndarray
+        heliocentric longitude of perihelion (from e.g., Laskar et al.)
+        omega (i.e., relative to NH autumn equinox) in radians.
     earthshape : str (optional)
         Shape of Earth, 'sphere' (default) or 'wgs84'.
 
@@ -680,6 +723,7 @@ def thresholdjm2(thresh, lat, ecc, obl, lpe, con=1361, timeres=0.01, tottime=365
     intirr = np.full_like(ecc, np.nan)
     ndays = np.full_like(ecc, np.nan)
 
+    # this needs to be vectorised
     for i in range(len(ecc)):
         sollons, _ = time2sollon(timerange, ecc[i], lpe[i], tottime)
         irrs, _, _, _ = dailymeanwm2(lat, sollons, con, ecc[i], obl[i], lpe[i], earthshape)
@@ -694,15 +738,17 @@ def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
     
     Calculate the surface area of a lat/lon bounding box on Earth.
 
+    Inputs lat1, lat2, lon1 and lon2 must all be of same shape.
+
     Parameters
     ----------
-    lat1 : float
+    lat1 : array-like
         A bounding geocentric latitude.
-    lat2 : float
+    lat2 : array-like
         The other bounding geocentric latitude.
-    lon1 : float
+    lon1 : array-like
         A bounding geocentric longitude.
-    lon2 : float
+    lon2 : array-like
         The other bounding gecentric longitude.
     shape : string (optional)
         'sphere' (default) or 'wgs84'
@@ -715,8 +761,9 @@ def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
 
     Returns
     -------
-    aq : float
-        The area of the bounding box, given in square metres.
+    aq : ndarray
+        The area of the bounding box, given in square metres. Same shape
+        as lat1, lat2, lon1 and lon2.
 
     Bryan Lougheed, February 2025
 
@@ -737,12 +784,15 @@ def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
     Full license text available at: http://www.gnu.org/licenses/
     """
     if angles == 'rad':
-        pass
+        lat1 = np.array(lat1)
+        lat2 = np.array(lat2)
+        lon1 = np.array(lon1)
+        lon2 = np.array(lon2)
     elif angles == 'deg':
-        lat1 = np.deg2rad(lat1)
-        lat2 = np.deg2rad(lat2)
-        lon1 = np.deg2rad(lon1)
-        lon2 = np.deg2rad(lon2)
+        lat1 = np.deg2rad(np.array(lat1))
+        lat2 = np.deg2rad(np.array(lat1))
+        lon1 = np.deg2rad(np.array(lat1))
+        lon2 = np.deg2rad(np.array(lat1))
     else:
         raise Exception("'angles' parameter should be set to either 'deg' or 'rad'")
 
@@ -868,4 +918,112 @@ def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
 #     plt.close()
 
 
+tka, ecc, obl, lpe = getlaskar2004(option=1, timeslice=(0, 0))
 
+# Define x and y intervals for the heatmap
+dayints = np.arange(0, 365.2, 0.1)
+sollons, eot = time2sollon(dayints, ecc, lpe, tottime=365.2)
+
+dayints = dayints.reshape(1,-1)
+sollons = sollons.reshape(1,-1)
+lats = np.arange(-89.9, 90, 0.1).reshape(-1,1)
+
+irr, dayhrs, rx, tsi = dailymeanwm2(lat=np.deg2rad(lats), sollon=sollons, ecc=ecc, obl=obl, lpe=lpe, con=1361)
+
+import matplotlib.pyplot as plt
+plt.imshow(irr)
+
+
+
+# latres = 0.1
+# totdays = 365.24
+# dayres = 0.1
+# lats = np.round(np.arange(90-latres/2,-90,-latres),2).reshape(-1,1)
+# lats = np.round(np.arange(90-latres/2,-0,-latres),2).reshape(-1,1)
+# gplats = np.rad2deg(geographiclat(lats,angles='deg'))
+
+# # calculate area for each latband
+# lataqo = areaquad(lats-latres/2, lats+latres/2, 0, 360, shape='wgs84', angles='deg')
+# lataqs = areaquad(lats-latres/2, lats+latres/2, 0, 360, shape='sphere', angles='deg')
+
+
+# # function for calculating Joblate and Jsphere for the latitude bands for certain sollon intervals
+# def JoJs(lats, lataqs, lataqo, ecc, obl, lpe, totdays, dayres, con=1361, sollonmin=0, sollonmax=2*np.pi):
+    
+#     timerange = np.arange(0, totdays, dayres)
+#     sollon, _ = time2sollon(time=timerange, ecc=ecc, lpe=lpe, tottime=totdays, obl=None, floatpp=64)
+#     sollon = sollon[(sollon>=sollonmin) & (sollon<=sollonmax)].reshape(1,-1)
+        
+#     irr, _, _, _ = dailymeanwm2(lats, sollon, ecc, obl, lpe, con, earthshape='wgs84')
+#     Qo = np.mean(irr,axis=1).reshape(-1,1)
+#     Jo = np.mean(irr,axis=1).reshape(-1,1) * 24*60*60*dayres*irr.shape[1] * lataqo
+
+#     irr, _, _, _ = dailymeanwm2(lats, sollon, ecc, obl, lpe, con, earthshape='sphere')
+#     Qs = np.mean(irr,axis=1).reshape(-1,1)
+#     Js = np.mean(irr,axis=1).reshape(-1,1) * 24*60*60*dayres*irr.shape[1] * lataqs
+    
+#     return Jo, Js, Qo, Qs
+
+
+
+
+
+# # hemelrijck figure 3 check
+
+# import matplotlib.pyplot as plt
+# cm = 1/2.54
+
+# ecc = 0.01672
+# lpe = np.deg2rad(282.05-180)
+# obl = np.deg2rad(23.45)
+
+# figure2 = plt.figure(figsize=(10*cm, 21*cm))
+# plt.clf()
+
+# # annual
+# _, _, Qo, Qs = JoJs(np.deg2rad(lats), lataqs, lataqo, ecc, obl, lpe, totdays, dayres, sollonmin=np.deg2rad(0), sollonmax=np.deg2rad(360))
+# plt.plot(lats,100*(Qo-Qs)/Qs)
+# #plt.plot(lats,Qo/Qs)
+# #plt.plot(lats,Qo,'k-')
+# #plt.plot(lats,Qs,'k--')
+# # summer
+# _, _, Qo, Qs = JoJs(np.deg2rad(lats), lataqs, lataqo, ecc, obl, lpe, totdays, dayres, sollonmin=np.deg2rad(0), sollonmax=np.deg2rad(180))
+# plt.plot(lats,100*(Qo-Qs)/Qs)
+# #plt.plot(lats,Qo/Qs)
+# #plt.plot(lats,Qo,'r-')
+# #plt.plot(lats,Qs,'r--')
+# # winter
+# _, _, Qo, Qs = JoJs(np.deg2rad(lats), lataqs, lataqo, ecc, obl, lpe, totdays, dayres, sollonmin=np.deg2rad(180), sollonmax=np.deg2rad(360))
+# plt.plot(lats,100*(Qo-Qs)/Qs)
+# #plt.plot(lats,Qo/Qs)
+# #plt.plot(lats,Qo,'b-')
+# #plt.plot(lats,Qs,'b--')
+
+# #Qo, dayhrss, rxs, tsis = dailymeanwm2(np.deg2rad(lats), np.deg2rad(270), ecc, obl, lpe, earthshape='wgs84')
+# #Qs, dayhrss, rxs, tsis = dailymeanwm2(np.deg2rad(lats), np.deg2rad(270), ecc, obl, lpe, earthshape='sphere')
+
+# #plt.plot(lats,Qo)
+# #plt.plot(lats,Qs)
+
+# plt.grid(True)
+# plt.xlim((0,90))
+# #plt.ylim((-1.4,0.1))
+
+# print(lats[(Qo-Qs)/Qs == np.min((Qo-Qs)/Qs)])
+
+
+# ## plot matrix of dayints on x axis ant lats on y axis 
+# timerange = np.arange(0, totdays, dayres)
+# sollon, _ = time2sollon(time=timerange, ecc=ecc, lpe=lpe, tottime=totdays, obl=None, floatpp=64)
+# sollon = sollon.reshape(1,-1)
+# Qo, _, _, _ = dailymeanwm2(np.deg2rad(lats), sollon, ecc, obl, lpe, con=1361, earthshape='wgs84')
+# Qs, _, _, _ = dailymeanwm2(np.deg2rad(lats), sollon, ecc, obl, lpe, con=1361, earthshape='sphere')
+
+# diffmat = Qo/Qs
+# #diffmat = 100*(Qo-Qs)/Qs
+# diffmat[diffmat>1.0] = 999
+
+# plt.figure()
+# plt.imshow(diffmat, aspect='auto', cmap='viridis', extent=[np.min(timerange), np.max(timerange), np.min(lats), np.max(lats)])
+# plt.colorbar()
+# plt.show()
