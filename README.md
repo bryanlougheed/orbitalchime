@@ -31,4 +31,4 @@ Each function contains help documentation that you can access using the standard
 
 ## Toturial
 
-A jupyter notebook tutorial detailing the use of the functions is also included, see "orbitalthebox_tutorial.ipynb".
+A jupyter notebook tutorial detailing the use of the functions is also included, see `orbitalthebox_tutorial.ipynb`.
