@@ -1,7 +1,7 @@
 # orbitalthebox python package
 
 ## Short description
-A package for using orbital parameters to carry out various irradiance calculations for Earth. Beta version. A release version is coming, which will also have a jupyter notebook tutorial.
+A package for using orbital parameters to carry out various irradiance calculations for Earth. Beta version. A release version is coming...
 
 ## Install
 Install (or upgrade) the package in your python environment using the `pip` terminal command (you may need to [install](https://github.com/git-guides/install-git) `git` first):
@@ -28,3 +28,7 @@ Each function contains help documentation that you can access using the standard
 `intradaywm2()`
 `thresholdjm2()`
 `areaquad()`
+
+## Toturial
+
+A jupyter notebook tutorial detailing the use of the functions is also included, see "orbitalthebox_tutorial.ipynb".
