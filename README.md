@@ -28,3 +28,7 @@ Each function contains help documentation that you can access using the standard
 `intradaywm2()`
 `thresholdjm2()`
 `areaquad()`
+
+## Jupyter notebook tutorial
+
+There are functional examples for the above functions in the jupyter notebook `orbitalchime_tutorial.ipynb`
