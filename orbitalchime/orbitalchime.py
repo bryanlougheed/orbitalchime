@@ -178,7 +178,7 @@ def solvekeplerE(M, ecc, floatpp=64):
     -----------
     Roger Sinnott (1985) BASIC script, as suggested by Meeus (1998).
     Solves Kepler equation for E, using binary search, to within computer precision.
-    Ported to Matlab by Tiho Kostadinov (Kostadinov and Gilb, 2014). 
+    BASIC ported to Matlab by Tiho Kostadinov (Kostadinov and Gilb, 2014). 
     Matlab version vectorised to handle array input by Bryan Lougheed (Lougheed, 2022). 
     Subsequently ported to python/numpy in October 2024 by Bryan Lougheed.
     Python 3.12.4, numpy 1.26.4.
@@ -353,20 +353,19 @@ def time2sollon(time, ecc, lpe, tottime=365.24, obl=None, floatpp=64):
     See following for background, as well as comments in the script:
     R.W. Sinnott (1985), "A computer assault on Kepler's equation." Sky and Telescope, vol. 70, page 159.
     Meeus, J., (1998). Astronomical Algorithms, 2nd ed. Willmann-Bell, Inc., Richmond, Virginia. (specifically Chapter 30).
-    Kostadinov and Gilb, (2014): doi: 10.5194/gmd-7-1051-2014
     B.C. Lougheed (2022), doi:10.5334/oq.100.
-    https://dr-phill-edwards.eu/Science/EOT.html (for equation of time)
+    https://dr-phill-edwards.eu/Astrophysics/EOT.html (for equation of time)
     """
     # convert input to numpy for speed and compatibility
     tottime = np.array([tottime])
     time = time.reshape(-1,1)
 
     # change lpe from heliocentric to geocentric
-    omega = np.array(lpe + np.pi) # np.array needed for when doing only one timeslice
-    omega[omega >= 2*np.pi] = omega[omega >= 2*np.pi] - 2*np.pi
+    omegabar = np.array(lpe + np.pi) # np.array needed for when doing only one timeslice
+    omegabar[omegabar >= 2*np.pi] = omegabar[omegabar >= 2*np.pi] - 2*np.pi
 
     # NH spring equinox relative to perihelion
-    veq = 2*np.pi - omega
+    veq = 2*np.pi - omegabar
     Eeq = 2 * np.arctan(np.tan(veq/2) * np.sqrt((1-ecc) / (1+ecc)))
     Meq = np.array(Eeq - ecc * np.sin(Eeq)) # as previous comment
     Meq[Meq<0] = np.pi + (np.pi - Meq[Meq<0] * -1)
@@ -378,10 +377,9 @@ def time2sollon(time, ecc, lpe, tottime=365.24, obl=None, floatpp=64):
     Mx = (dx / tottime) * 2*np.pi
     Ex, _ = solvekeplerE(Mx, ecc, floatpp=floatpp)  # Get Ex by solving Kepler equation
     vx = 2 * np.arctan(np.tan(Ex/2) * np.sqrt((1+ecc) / (1-ecc)))
-    vx[vx<0] = np.pi + (np.pi - vx[vx<0] * -1)
+    vx[vx<0] = np.pi + (np.pi - vx[vx<0] * -1) # incoming
     
     # target day's v relative to NH spring equinox v
-    vx[vx<veq] += 2*np.pi
     sollon = vx - veq
 
     # eliminate rounding errors at 0
@@ -401,6 +399,9 @@ def time2sollon(time, ecc, lpe, tottime=365.24, obl=None, floatpp=64):
         eot = dtecc + dtobl
     else:
         eot = np.array([])
+
+    sollon[sollon<0] += 2*np.pi
+    sollon[sollon>2*np.pi] -= 2*np.pi
 
     return sollon, eot
 
@@ -593,14 +594,13 @@ def dailymeanwm2(lat, sollon, ecc, obl, lpe, con=1361, earthshape='sphere'):
 
     return irr, dayhrs, rx, tsi
 
-def intradaywm2(lat, ecc, obl, lpe, con=1361.0, daysinyear=365.240, dayres=0.001):
+def intradaywm2(lat, ecc, obl, lpe, dayint, daysinyear=365.242, con=1361.0):
     """
-    irr, days, dayher = intradaywm2(lat, ecc, obl, lpe, con=1361, daysinyear=365.240, dayres=0.001)
+    irr, elev, msdhr, lashr = intradaywm2(lat, ecc, obl, lpe, dayint, daysinyear=365.242, con=1361.0)
 
-    Calculate a tropical year's worth of intraday irradiance (W/m²) for a particular
-    latitude and orbital configuration. Calculates for a longitude where
-    northern spring equinox occurs at day 0.0 (i.e., at exactly local midnight 
-    on the first day of the tropical year). Script takes equation of time into account.
+    Calculate intraday irradiance (W/m²) for a particular  latitude and orbital configuration. 
+    Calculations assume a longitude where northern spring equinox occurs at day 0.0 (i.e., at exactly
+    local midnight on the first day of the tropical year). Script takes equation of time into account.
 
     Parameters
     ----------
@@ -613,23 +613,32 @@ def intradaywm2(lat, ecc, obl, lpe, con=1361.0, daysinyear=365.240, dayres=0.001
     lpe : ndarray
         heliocentric longitude of perihelion (from e.g., Laskar et al.)
         omega (i.e., relative to NH autumn equinox) in radians.
+    dayint : ndarray
+        The mean solar day interval(s) to be analysed, in day decimals (i.e. 0.5 for midday on day 0).
+        Note that, due to the equation of time, 0.5 would not necessarily exactly correspond to local solar noon.
+        Calculations will assume that dayint 0.0 (midnight on day zero) corresponds to the northern hemisphere
+        spring equinox.
+    daysinyear : float
+        The number of mean solar days in the year, default is 365.242
     con : float
         solar constant in W/m², default is 1361 W/m²
-    daysinyear : float
-        number of mean solar days in the year, default is 365.240
-    dayres : float
-        mean solar day resolution for analysis, default is 0.001
 
     Returns
     -------
-    irr, days, dayher
+    irr, elev, msdhr, lashr, eot
 
     irr : ndarray
-        array of W/m² for every day interval calculated
-    days : ndarray
-        all the solar day intervals. 0 corresponds to the boreal spring equinox.
-    dayhr : ndarray
-        time of the the mean solar day (in hours), same dimensions as irr and days
+        array of W/m² for every mean solar day interval calculated
+    elev : ndarray
+        solar elevation (radians), same dimension as irr
+    msdhr : ndarray
+        time of the the mean solar day (0-24, in hours), same dimension as irr
+        Can be best thought of as "clock hours".
+    lashr : ndarray
+        local apparent solar hour (0-24), same dimension as irr
+        Can be best thought of as "sun dial hours".
+    eot : ndarray
+        Equation of time (minutes). Returns empty if obl not supplied.
 
     Bryan Lougheed, April 2023, Matlab 2019a
     Ported to python/numpy by Bryan Lougheed, Oct. 2024
@@ -639,32 +648,31 @@ def intradaywm2(lat, ecc, obl, lpe, con=1361.0, daysinyear=365.240, dayres=0.001
     # convert some input to numpy for speed (might not be necessary)
     con = np.array([con])
 
-    # day length in hours (placeholder for future development)
-    # has not been properly implemented/tested yet for day lengths other than 24
-    dlen = 24 
-    
-    # Create time series of mean solar day fractions
-    days = np.arange(0, daysinyear, dayres)
-    dayhr = (days - np.floor(days)) * dlen
-
     # Calculate Earth's solar longitude (i.e., lambda) and equation of time for each day fraction
-    sunlon, eot = time2sollon(days, ecc, lpe, daysinyear, obl)
+    sunlon, eot = time2sollon(dayint, ecc, lpe, daysinyear, obl)
+
+    # mean solar day length in hours (placeholder for future development)
+    # has not been properly implemented/tested yet for day lengths other than 24
+    msdlen = 24 
+
+    # Create vector of mean solar day hours
+    msdhr = (dayint - np.floor(dayint)) * msdlen
 
     # Get local apparent solar hour (correct for eot)
-    dayhr = dayhr.reshape(-1,1)
-    eot, dayhr = np.broadcast_arrays(eot,dayhr)
-    solhr = (eot/60) + dayhr # /60, mins -> hrs
-    solhr[solhr<0] += dlen
-    solhr[solhr>dlen] -= dlen
+    msdhr = msdhr.reshape(-1,1)
+    eot, msdhr = np.broadcast_arrays(eot,msdhr)
+    lashr = (eot/60) + msdhr # /60, mins -> hrs
+    lashr[lashr<0] += msdlen
+    lashr[lashr>msdlen] -= msdlen
 
     # Declination of the sun
     dsun = np.arcsin(np.sin(obl) * np.sin(sunlon))
 
-    # Local hour angle (-180 to +180 deg, midday = 0 deg)
-    hangles = (2*np.pi / dlen) * (solhr - dlen/2)
+    # Local hour angle (-pi to +pi radians, midday = 0 radians)
+    hangle = (2*np.pi / msdlen) * (lashr - msdlen/2)
 
     # Solar elevation
-    elev = np.arcsin(np.sin(dsun) * np.sin(lat) + np.cos(dsun) * np.cos(lat) * np.cos(hangles))
+    elev = np.arcsin(np.sin(dsun) * np.sin(lat) + np.cos(dsun) * np.cos(lat) * np.cos(hangle))
 
     # Calculate distance from Sun in AU
     omegabar = lpe + np.pi
@@ -676,11 +684,11 @@ def intradaywm2(lat, ecc, obl, lpe, con=1361.0, daysinyear=365.240, dayres=0.001
     # Calculate tsi as function of con relative to 1 AU
     tsi = con * (1/rx)**2
 
-    # Calculate W/m2, vertical component of tsi
+    # Calculate TOA W/m2, i.e. the vertical component of TSI W/m2
     irr = tsi * np.sin(elev)
-    irr[elev < 0] = 0  # sun under horizon, night time
+    irr[irr < 0] = 0  # sun under horizon, night time
 
-    return irr, days, dayhr
+    return irr, elev, msdhr, lashr
 
 def thresholdjm2(thresh, lat, ecc, obl, lpe, con=1361, timeres=0.01, tottime=365.24, earthshape='sphere'):
     """
@@ -917,20 +925,6 @@ def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
 #     plt.close()
 
 
-tka, ecc, obl, lpe = getlaskar2004(option=1, timeslice=(0, 0))
-
-# Define x and y intervals for the heatmap
-dayints = np.arange(0, 365.2, 0.1)
-sollons, eot = time2sollon(dayints, ecc, lpe, tottime=365.2)
-
-dayints = dayints.reshape(1,-1)
-sollons = sollons.reshape(1,-1)
-lats = np.arange(-89.9, 90, 0.1).reshape(-1,1)
-
-irr, dayhrs, rx, tsi = dailymeanwm2(lat=np.deg2rad(lats), sollon=sollons, ecc=ecc, obl=obl, lpe=lpe, con=1361)
-
-import matplotlib.pyplot as plt
-plt.imshow(irr)
 
 
 
@@ -962,6 +956,19 @@ plt.imshow(irr)
 #     Js = np.mean(irr,axis=1).reshape(-1,1) * 24*60*60*dayres*irr.shape[1] * lataqs
     
 #     return Jo, Js, Qo, Qs
+
+
+
+tka, ecc, obl, lpe = getlaskar2004(option=1, timeslice=(0))
+
+# do time resolution of one minute
+dayint = np.arange(0,365.242*24*60,1)/24/60
+
+irr, elev, msdhr, lashr, eot = intradaywm2(np.deg2rad(65), ecc, obl, lpe, dayint, daysinyear=365.242, con=1361.0)
+
+import matplotlib.pyplot as plt
+plt.plot(dayint, msdhr-lashr)
+plt.xlim([0,100])
 
 
 
