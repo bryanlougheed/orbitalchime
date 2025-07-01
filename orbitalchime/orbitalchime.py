@@ -596,7 +596,7 @@ def dailymeanwm2(lat, sollon, ecc, obl, lpe, con=1361, earthshape='sphere'):
 
 def intradaywm2(lat, ecc, obl, lpe, dayint, daysinyear=365.242, con=1361.0):
     """
-    irr, elev, msdhr, lashr = intradaywm2(lat, ecc, obl, lpe, dayint, daysinyear=365.242, con=1361.0)
+    irr, elev, msdhr, lashr, eot = intradaywm2(lat, ecc, obl, lpe, dayint, daysinyear=365.242, con=1361.0)
 
     Calculate intraday irradiance (W/m²) for a particular  latitude and orbital configuration. 
     Calculations assume a longitude where northern spring equinox occurs at day 0.0 (i.e., at exactly
@@ -688,7 +688,7 @@ def intradaywm2(lat, ecc, obl, lpe, dayint, daysinyear=365.242, con=1361.0):
     irr = tsi * np.sin(elev)
     irr[irr < 0] = 0  # sun under horizon, night time
 
-    return irr, elev, msdhr, lashr
+    return irr, elev, msdhr, lashr, eot
 
 def thresholdjm2(thresh, lat, ecc, obl, lpe, con=1361, timeres=0.01, tottime=365.24, earthshape='sphere'):
     """
@@ -956,22 +956,6 @@ def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
 #     Js = np.mean(irr,axis=1).reshape(-1,1) * 24*60*60*dayres*irr.shape[1] * lataqs
     
 #     return Jo, Js, Qo, Qs
-
-
-
-tka, ecc, obl, lpe = getlaskar2004(option=1, timeslice=(0))
-
-# do time resolution of one minute
-dayint = np.arange(0,365.242*24*60,1)/24/60
-
-irr, elev, msdhr, lashr, eot = intradaywm2(np.deg2rad(65), ecc, obl, lpe, dayint, daysinyear=365.242, con=1361.0)
-
-import matplotlib.pyplot as plt
-plt.plot(dayint, msdhr-lashr)
-plt.xlim([0,100])
-
-
-
 
 
 # # hemelrijck figure 3 check
