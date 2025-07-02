@@ -733,7 +733,7 @@ def thresholdjm2(thresh, lat, ecc, obl, lpe, con=1361, timeres=0.01, tottime=365
     # this needs to be vectorised
     for i in range(len(ecc)):
         sollons, _ = time2sollon(timerange, ecc[i], lpe[i], tottime)
-        irrs, _, _, _ = dailymeanwm2(lat, sollons, con, ecc[i], obl[i], lpe[i], earthshape)
+        irrs, _, _, _ = dailymeanwm2(lat, sollons, ecc[i], obl[i], lpe[i], con=1361, earthshape='sphere')
         ndays[i] = np.sum(irrs >= thresh) * timeres
         intirr[i] = np.mean(irrs[irrs >= thresh]) * (ndays[i] * 24 * 60 * 60)  # W/m2 to J/m2
 
@@ -839,8 +839,6 @@ def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
         aq = np.abs( c * ((s2 / se2) - (s1 / se1) + g) )
   
     return aq
-
-##### under construction
 
 # def plotorbit(ecc, lpe, savename):
 #     """
