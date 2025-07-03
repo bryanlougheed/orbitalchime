@@ -886,24 +886,6 @@ def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
     return aq
 
 
-import time
-
-# Sample size for performance test
-N = 10_000_000
-M = np.random.uniform(0, 2*np.pi, N)
-ecc = np.random.uniform(0.0, 0.98, N)
-
-# Your function
-start1 = time.time()
-E1, prec1 = solvekeplerE(M, ecc)
-end1 = time.time()
-print(f"numpy vectorised: {end1 - start1:.4f} seconds")
-
-start1 = time.time()
-E2, prec2 = solvekeplerE_jit(M, ecc)
-end1 = time.time()
-print(f"numba jit parallel linear: {end1 - start1:.4f} seconds")
-
 # def plotorbit(ecc, lpe, savename):
 #     """
 #     Creates a scale plot of the Earth's orbit and saves to hard drive.
