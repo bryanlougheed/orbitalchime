@@ -153,12 +153,15 @@ def getlaskar2010(option=1, timeslice=(-np.inf, np.inf)):
 
 @njit(parallel=True)
 def keplerjitloop(M, ecc, floatpp):
+    # used by solvekeplerE()
+
     # define these here as constant
     # (instead of repeat calls of np.pi in loop)
     kvartpi = np.pi/4
     halvpi = np.pi/2
     pipi = 2*np.pi
 
+    # predeclare before linear loop
     n = M.size
     E = np.empty(n)
     precision = np.empty(n)
@@ -196,7 +199,7 @@ def keplerjitloop(M, ecc, floatpp):
 
     return E, precision
 
-def solvekeplerE(M, ecc, floatpp=64, mode='numba'):
+def solvekeplerE(M, ecc, floatpp=64, mode='auto'):
     """
     E, precision = solvekeplerE(M, ecc, floatpp=64, mode='auto')
 
@@ -346,6 +349,9 @@ def sollon2time(sollon, ecc, lpe, tottime=365.24, obl=None):
     Also: https://dr-phill-edwards.eu/Astrophysics/EOT.html (for equation of time)
     """
 
+    # in case lpe is only one value
+    lpe = np.atleast_1d(lpe)   
+
     # Change lpe from heliocentric to geocentric
     omega = lpe + np.pi
     omega[omega >= 2*np.pi] -= 2*np.pi  # wrap to 360
@@ -441,14 +447,17 @@ def time2sollon(time, ecc, lpe, tottime=365.24, obl=None, floatpp=64):
     tottime = np.array([tottime])
     time = time.reshape(-1,1)
 
+    # in case lpe is only one value
+    lpe = np.atleast_1d(lpe)
+
     # change lpe from heliocentric to geocentric
-    omegabar = np.array(lpe + np.pi) # np.array needed for when doing only one timeslice
+    omegabar = lpe + np.pi # np.array needed for when doing only one timeslice
     omegabar[omegabar >= 2*np.pi] = omegabar[omegabar >= 2*np.pi] - 2*np.pi
 
     # NH spring equinox relative to perihelion
     veq = 2*np.pi - omegabar
     Eeq = 2 * np.arctan(np.tan(veq/2) * np.sqrt((1-ecc) / (1+ecc)))
-    Meq = np.array(Eeq - ecc * np.sin(Eeq)) # as previous comment
+    Meq = Eeq - ecc * np.sin(Eeq) # as previous comment
     Meq[Meq<0] = np.pi + (np.pi - Meq[Meq<0] * -1)
     deq = Meq / (2*np.pi) * tottime
 
@@ -771,9 +780,9 @@ def intradaywm2(lat, ecc, obl, lpe, dayint, daysinyear=365.242, con=1361.0):
 
     return irr, elev, msdhr, lashr, eot
 
-def thresholdjm2(thresh, lat, ecc, obl, lpe, con=1361, timeres=0.01, tottime=365.24, earthshape='sphere'):
+def thresholdjm2(thresh, lat, ecc, obl, lpe, timeres=0.1, tottime=365.24, con=1361, earthshape='sphere'):
     """
-    intirr, ndays = thresholdjm2(thresh, lat, ecc, obl, lpe, con=1361, timeres=0.01, tottime=365.24, earthshape='sphere')
+    intirr, ndays = thresholdjm2(thresh, lat, ecc, obl, lpe, timeres=0.01, tottime=365.24, con=1361, earthshape='sphere')
 
     Calculate integrated irradiation (J/m²) at top of atmosphere for all day intervals 
     exceeding a certain threshold in mean daily irradiance (W/m²).
@@ -784,11 +793,7 @@ def thresholdjm2(thresh, lat, ecc, obl, lpe, con=1361, timeres=0.01, tottime=365
     thresh : float or array-like
         Threshold value (W/m2). Single value, or vector of values.
     lat : float
-        Geocentric latitude (in deg. N, negative for S) on Earth. Single value.
-    con : float or array-like, optional
-        Solar constant. Single numerical value or 1D array, W/m2. Default is 1361.
-    dayres : float, optional
-        Day resolution for the integration. Default is 0.01.
+        Geocentric latitude (in radians, N is positive, negative for S) on Earth. Single value.
     ecc : array-like
         Eccentricity. Numerical value(s). 1D array.
     obl : array-like
@@ -796,6 +801,12 @@ def thresholdjm2(thresh, lat, ecc, obl, lpe, con=1361, timeres=0.01, tottime=365
     lpe : ndarray
         heliocentric longitude of perihelion (from e.g., Laskar et al.)
         omega (i.e., relative to NH autumn equinox) in radians.
+    timeres : float, optional
+        Time resolution for the integration. Default is 0.1.
+    tottime : float, optional
+        Total time in the tropical year. Default is 365.24.
+    con : float or array-like, optional
+        Solar constant. Single numerical value or 1D array, W/m2. Default is 1361.
     earthshape : str (optional)
         Shape of Earth, 'sphere' (default) or 'wgs84'.
 
@@ -811,14 +822,75 @@ def thresholdjm2(thresh, lat, ecc, obl, lpe, con=1361, timeres=0.01, tottime=365
     intirr = np.full_like(ecc, np.nan)
     ndays = np.full_like(ecc, np.nan)
 
-    # this needs to be vectorised
+    # this loop can probably be made more efficient/vectorised
     for i in range(len(ecc)):
         sollons, _ = time2sollon(timerange, ecc[i], lpe[i], tottime)
-        irrs, _, _, _ = dailymeanwm2(lat, sollons, ecc[i], obl[i], lpe[i], con=1361, earthshape='sphere')
+        irrs, _, _, _ = dailymeanwm2(lat, sollons, ecc[i], obl[i], lpe[i], con=con, earthshape=earthshape)
         ndays[i] = np.sum(irrs >= thresh) * timeres
-        intirr[i] = np.mean(irrs[irrs >= thresh]) * (ndays[i] * 24 * 60 * 60)  # W/m2 to J/m2
+        intirr[i] = np.mean(irrs[irrs >= thresh]) * (ndays[i] * 24 * 60 * 60)  # W/m2 to J/m2s
 
     return intirr, ndays
+
+
+@njit(parallel=True)
+def jitloopsjh(irrs, timeres):
+    n_dayints, n_kyr = irrs.shape
+    half_len = n_dayints // 2
+    miljm2 = np.full(n_kyr, np.nan)
+
+    for i in prange(n_kyr):
+        col = irrs[:, i]
+        for j in range(1, n_dayints - half_len):
+            summer = col[j:j + half_len]
+            win_pre = col[:j]
+            win_post = col[j + half_len:]
+            win_max = max(np.max(win_pre), np.max(win_post))
+
+            if np.min(summer) > win_max:
+                miljm2[i] = np.mean(summer) * half_len * timeres * 24 * 60 * 60
+                break
+    return miljm2
+
+def sommerhalbjahr(lat, ecc, obl, lpe, timeres=0.1, tottime=365.24, con=1361, earthshape='sphere'):
+    """
+    shjjm2 = sommerhalbjahr(lat, ecc, obl, lpe, timeres=0.1, tottime=365.24, con=1361, earthshape='sphere')
+
+    Only works at northern high latitudes.
+    
+    Parameters
+    ----------
+    lat : float
+        Geocentric latitude (in radians, N is positive, negative for S) on Earth. Single value.
+    ecc : array-like
+        Eccentricity. Numerical value(s). 1D array.
+    obl : array-like
+        Obliquity. Numerical value(s), radians. 1D array.
+    lpe : ndarray
+        heliocentric longitude of perihelion (from e.g., Laskar et al.)
+        omega (i.e., relative to NH autumn equinox) in radians.
+    con : float or array-like, optional
+        Solar constant. Single numerical value or 1D array, W/m². Default is 1361.
+    timeres : float, optional
+        Day resolution for the integration. Default is 0.1.
+    tottime : float, optional
+        Total time in the tropical year. Default is 365.24.
+    earthshape : str (optional)
+        Shape of Earth, 'sphere' (default) or 'wgs84'.
+
+    Returns
+    -------
+    shjjm2 : ndarray
+        Milanković caloric summer half year (sommerhalbjahr) in J/m². Array same dimensions as ecc, obl, and lpe.
+    """
+    timeints = np.arange(0,tottime,timeres)
+    sollons, _ = time2sollon(timeints, ecc, lpe, tottime=tottime)
+    irrs, _, _, _ = dailymeanwm2(lat=lat, sollon=sollons, ecc=ecc, obl=obl, lpe=lpe, con=con, earthshape=earthshape)
+    ind = timeints > (270/365)*tottime
+    irrs = np.vstack((irrs[ind, :], irrs[~ind, :]))
+    shjjm2 = jitloopsjh(irrs, timeres)
+
+    return shjjm2
+
 
 def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
     """
@@ -1003,6 +1075,42 @@ def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
 #     plt.gcf().set_size_inches(7.5, 7.5)
 #     plt.savefig(savename, dpi=150, bbox_inches='tight')
 #     plt.close()
+
+
+# import numpy as np
+# import orbitalchime as ochime
+# import matplotlib.pyplot as plt
+
+# # Laskar 2000 CE values
+
+# plt.clf()
+
+# for ecc in np.array([0, 0.0167]):
+
+#     #ecc = 0.01670236
+#     obl = np.deg2rad(23.439)
+#     lpe = np.deg2rad(102.918)
+
+#     dayints = np.arange(0,365.24,0.1)
+#     sollons, eot = time2sollon(dayints, ecc, lpe, tottime=365.24)
+
+#     ve, _ = sollon2time(np.deg2rad(0), ecc, lpe, tottime=365.24)
+#     ss, _ = sollon2time(np.deg2rad(90), ecc, lpe, tottime=365.24)
+#     ae, _ = sollon2time(np.deg2rad(180), ecc, lpe, tottime=365.24)
+#     ws, _ = sollon2time(np.deg2rad(270), ecc, lpe, tottime=365.24)
+
+#     for lat in [65]:
+
+#         irr, dayhrs, rx, tsi = dailymeanwm2(np.deg2rad(lat), sollons, ecc, obl, lpe, con=1361, earthshape='sphere')
+#         plt.plot(dayints,dayhrs)
+
+# plt.ylim(0,24)
+# plt.xlim(0,365.24)
+# plt.yticks(np.arange(0,25,3))
+# plt.axvline(x=ve, color='black', linestyle=':', linewidth=2, label='Vernal equinox')
+# plt.axvline(x=ss, color='black', linestyle=':', linewidth=2, label='Vernal equinox')
+# plt.axvline(x=ae, color='black', linestyle=':', linewidth=2, label='Vernal equinox')
+# plt.axvline(x=ws, color='black', linestyle=':', linewidth=2, label='Vernal equinox')
 
 
 
