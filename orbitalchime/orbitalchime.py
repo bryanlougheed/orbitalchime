@@ -1,4 +1,5 @@
 import numpy as np
+from numba import njit, prange
 import pandas as pd
 import os
 import warnings
@@ -149,6 +150,7 @@ def getlaskar2010(option=1, timeslice=(-np.inf, np.inf)):
 
     return tka, ecc
 
+@njit(parallel=True)
 def solvekeplerE(M, ecc, floatpp=64):
     """
     E, precision = solvekeplerE(M, ecc)
@@ -190,36 +192,79 @@ def solvekeplerE(M, ecc, floatpp=64):
     Kostadinov and Gilb, (2014): doi:10.5194/gmd-7-1051-2014.
     B.C. Lougheed (2022), doi:10.5334/oq.100.
     """
-    M, ecc = np.broadcast_arrays(M, ecc) # not necessary in matlab, needed here in numpy
 
-    F = np.sign(M)
-    M = np.abs(M) / (2*np.pi)
-    M = (M-np.floor(M)) * 2*np.pi * F
-    M[M<0] += 2*np.pi  # put in same relative orbit
-    F = np.ones_like(M)
+    # # pure numpy vectorised version, runs on single thread
+    # M, ecc = np.broadcast_arrays(M, ecc) # not necessary in matlab, needed here in numpy
 
-    mask = M>np.pi
-    F[mask] = -1
-    M[mask] = 2*np.pi - M[mask]  # inbound
+    # F = np.sign(M)
+    # M = np.abs(M) / (2*np.pi)
+    # M = (M-np.floor(M)) * 2*np.pi * F
+    # M[M<0] += 2*np.pi  # put in same relative orbit
+    # F = np.ones_like(M)
+
+    # mask = M>np.pi
+    # F[mask] = -1
+    # M[mask] = 2*np.pi - M[mask]  # inbound
     
-    Eo = np.full_like(ecc, np.pi/2)
-    D = np.full_like(ecc, np.pi/4)
-    # Converging loop
-    # Sinnot says number of iterations is 3.30 * significant figures of system. 
-    # Matlab double has 16 digit precision, so 16*3.30=53. Let's use 58
-    # np int64 is the same
-    iters = np.ceil((floatpp/4)*3.3+5)
-    for i in range(int(iters)): 
-        if i == int(iters-1):
-            Eoo = np.copy(Eo)
-        M1 = Eo - ecc * np.sin(Eo)
-        Eo += D * np.sign(M - M1)
-        D /= 2
+    # Eo = np.full_like(ecc, np.pi/2)
+    # D = np.full_like(ecc, np.pi/4)
+    # # Converging loop
+    # # Sinnot says number of iterations is 3.30 * significant figures of system. 
+    # # Matlab double has 16 digit precision, so 16*3.30=53. Let's use 58
+    # # np int64 is the same
+    # iters = np.ceil((floatpp/4)*3.3+5)
+    # for i in prange(int(iters)): 
+    #     if i == int(iters-1):
+    #         Eoo = np.copy(Eo)
+    #     M1 = Eo - ecc * np.sin(Eo)
+    #     Eo += D * np.sign(M - M1)
+    #     D /= 2
 
-    E = Eo * F
-    precision = np.abs(Eo - Eoo)
+    # E = Eo * F
+    # precision = np.abs(Eo - Eoo)
+
+    # numpy+numba linear version optimised for multithreading
+    twopi = 2 * np.pi
+    halfpi = np.pi / 2
+    kvartpi = np.pi / 4
+
+    n = M.size
+    E = np.empty(n)
+    precision = np.empty(n)
+
+    for i in prange(n):
+        Mi = M[i]
+        ecci = ecc[i]
+        sign_Mi = 1.0
+        if Mi < 0:
+            Mi = -Mi
+            sign_Mi = -1.0
+
+        Mi = (Mi % twopi) * sign_Mi
+        if Mi < 0:
+            Mi += twopi
+
+        F = 1.0
+        if Mi > np.pi:
+            F = -1.0
+            Mi = twopi - Mi
+
+        Eo = halfpi
+        D = kvartpi
+        iters = int((floatpp / 4) * 3.3 + 5)
+
+        for j in range(iters):
+            if j == iters - 1:
+                Eoo = Eo
+            M1 = Eo - ecci * np.sin(Eo)
+            Eo += D * np.sign(Mi - M1)
+            D *= 0.5
+
+        E[i] = Eo * F
+        precision[i] = abs(Eo - Eoo)
         
     return E, precision
+
 
 def sollon2time(sollon, ecc, lpe, tottime=365.24, obl=None):
     """
@@ -262,7 +307,7 @@ def sollon2time(sollon, ecc, lpe, tottime=365.24, obl=None):
     
     See following for background, as well as comments in the script:
     J. Meeus, (1998). Astronomical Algorithms, 2nd ed. Willmann-Bell, Inc., Richmond, Virginia. (specifically Chapter 30).
-    Also: https://dr-phill-edwards.eu/Science/EOT.html (for equation of time)
+    Also: https://dr-phill-edwards.eu/Astrophysics/EOT.html (for equation of time)
     """
 
     # Change lpe from heliocentric to geocentric
@@ -774,7 +819,7 @@ def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
 
     Bryan Lougheed, February 2025
 
-    This a python/numpy simplified port of the Octave function areaquad.m from the 
+    This a python/numpy simplified port of the Octave function areaquad.Mi from the 
     Octave "mapping" package (v.1.4.2) (https://gnu-octave.github.io/packages/mapping/),
     which included the following license:
 
@@ -839,6 +884,25 @@ def areaquad(lat1, lat2, lon1, lon2, shape='sphere', angles='rad'):
         aq = np.abs( c * ((s2 / se2) - (s1 / se1) + g) )
   
     return aq
+
+
+import time
+
+# Sample size for performance test
+N = 10_000_000
+M = np.random.uniform(0, 2*np.pi, N)
+ecc = np.random.uniform(0.0, 0.98, N)
+
+# Your function
+start1 = time.time()
+E1, prec1 = solvekeplerE(M, ecc)
+end1 = time.time()
+print(f"numpy vectorised: {end1 - start1:.4f} seconds")
+
+start1 = time.time()
+E2, prec2 = solvekeplerE_jit(M, ecc)
+end1 = time.time()
+print(f"numba jit parallel linear: {end1 - start1:.4f} seconds")
 
 # def plotorbit(ecc, lpe, savename):
 #     """
