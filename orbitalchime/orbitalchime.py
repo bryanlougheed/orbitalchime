@@ -244,8 +244,7 @@ def solvekeplerE(M, ecc, floatpp=64, mode='auto'):
     B.C. Lougheed (2022), doi:10.5334/oq.100.
     """
     if mode == 'auto':
-        total_size = np.broadcast(M, ecc).size
-        if total_size > 450000:
+        if np.broadcast(M, ecc).size > 450000:
             mode = 'numba'
         else:
             mode = 'numpy'
@@ -291,7 +290,7 @@ def solvekeplerE(M, ecc, floatpp=64, mode='auto'):
         ecc_flat = ecc.ravel()
 
         # pass through keplerjitlooop function, which is defined
-        # outside this function so it is compiled only once
+        # outside this function so that it is compiled only once
         E_flat, prec_flat = keplerjitloop(M_flat, ecc_flat, floatpp)
 
         # put back into original broadcast shape
@@ -359,17 +358,17 @@ def sollon2time(sollon, ecc, lpe, tottime=365.24, obl=None):
     # Get day of anchor day (dz) relative to perihelion
     vz = 2*np.pi - omega  # v of spring equinox relative to perihelion
     vz[vz > 2*np.pi] -= 2*np.pi
-    Ez = 2 * np.arctan(np.tan(vz / 2) * np.sqrt((1 - ecc) / (1 + ecc)))  # Meeus (1998) page 195, solve for E
+    Ez = 2 * np.arctan(np.tan(vz/2) * np.sqrt((1-ecc) / (1+ecc)))  # Meeus (1998) page 195, solve for E
     Mz = Ez - ecc * np.sin(Ez)  # Meeus page 195, solve for M (Kepler equation). M is the circular orbit equivalent of v
-    Mz[Mz < 0] = np.pi + (np.pi - Mz[Mz < 0] * -1)  # inbound to perihelion
+    Mz[Mz < 0] = np.pi + (np.pi - Mz[Mz<0] * -1)  # inbound to perihelion
     dz = Mz / (2*np.pi) * tottime
 
     # Get day of target day (dx) relative to perihelion
     vx = vz + sollon
-    vx[vx > 2*np.pi] -= 2 * np.pi
-    Ex = 2 * np.arctan(np.tan(vx / 2) * np.sqrt((1 - ecc) / (1 + ecc)))  # Meeus (1998) page 195, solve for E
+    vx[vx>2*np.pi] -= 2 * np.pi
+    Ex = 2 * np.arctan(np.tan(vx / 2) * np.sqrt((1-ecc) / (1+ecc)))  # Meeus (1998) page 195, solve for E
     Mx = Ex - ecc * np.sin(Ex)  # Solve for M (Kepler equation)
-    Mx[Mx<0] = np.pi + (np.pi - Mx[Mx < 0] * -1)  # inbound to perihelion, (probably not necessary)
+    Mx[Mx<0] = np.pi + (np.pi - Mx[Mx<0] * -1)  # inbound to perihelion, (probably not necessary)
     dx = Mx / (2*np.pi) * tottime
 
     # Get day of target day (dx) relative to day of anchor day (dz)
@@ -385,7 +384,7 @@ def sollon2time(sollon, ecc, lpe, tottime=365.24, obl=None):
     # https://dr-phill-edwards.eu/Astrophysics/EOT.html (explains it very nicely) 
     if obl is not None:
         # eccentricity component
-        dtecc = np.rad2deg(Mx-vx) * 4  # four minutes per degree (24 hrs * 60 mins / 360 degrees )
+        dtecc = np.rad2deg(Mx-vx) * 4  # four minutes per degree longitude (24 hrs * 60 mins / 360 degrees )
         # obliquity component
         alpha = np.arctan2(np.sin(sollon) * np.cos(obl), np.cos(sollon))
         alpha[alpha<0] += 2*np.pi
@@ -403,7 +402,7 @@ def time2sollon(time, ecc, lpe, tottime=365.24, obl=None, floatpp=64):
 
     Given a particular eccentricity and longitude of perihelion, get geocentric solar longitude 
     associated with a particular time of the tropical year i.e. by accounting for 
-    conservation of angular momentum during orbit (Kepler 2nd Law).
+    conservation of angular momentum during orbit (Kepler's 2nd Law).
 
     Parameters
     ----------
@@ -530,7 +529,7 @@ def geographiclat(gclat, angles='rad'):
     f = 1 / 298.257223563  # wgs84 flattening value
     re = 6378137.0  # wgs84 equatorial radius (metres)
     rp = re * (1 - f)  # calculate polar radius
-    gplat = np.arctan((re / rp)**2 * np.tan(gclat))
+    gplat = np.arctan((re/rp)**2 * np.tan(gclat))
 
     return gplat
 
@@ -598,6 +597,7 @@ def dailymeanwm2(lat, sollon, ecc, obl, lpe, con=1361, earthshape='sphere'):
     ecc = np.array(ecc)
     obl = np.array(obl)
     lpe = np.array(lpe)
+    lpe = np.atleast_1d(lpe)
     con = np.array(con)
     
     # Check for NaN in input
@@ -607,10 +607,10 @@ def dailymeanwm2(lat, sollon, ecc, obl, lpe, con=1361, earthshape='sphere'):
             warnings.warn(f"Inputted {name} contains NaN, which could cause erroneous calculations", UserWarning)
 
     ### Calculate rx and tsi
-    omegabar = np.array(lpe + np.pi)  # add 180 degrees. (heliocentric to geocentric)
+    omegabar = lpe + np.pi  # add 180 degrees. (heliocentric to geocentric)
     omegabar[omegabar >= 2*np.pi] -= 2*np.pi  # put back in 0-360 range
     veq = 2*np.pi - omegabar  # v (true anomaly) of spring equinox relative to perihelion
-    vx = np.array(veq + sollon)  # v (true anomaly) of inputted sollon relative to perihelion
+    vx = veq + sollon  # v (true anomaly) of inputted sollon relative to perihelion
     vx[vx > 2*np.pi] -= 2*np.pi  # put back in 0-360 range
     rx = (1 - ecc**2) / (1 + ecc * np.cos(vx))  # Distance from Sun in AU, Eq. 30.3 in Meeus (1998)
     tsi = con * (1 / rx)**2 # Total solar irradiance at distance rx
@@ -833,7 +833,7 @@ def thresholdjm2(thresh, lat, ecc, obl, lpe, timeres=0.1, tottime=365.24, con=13
 
 
 @njit(parallel=True)
-def jitloopsjh(irrs, timeres):
+def jitloopshj(irrs, timeres):
     n_dayints, n_kyr = irrs.shape
     half_len = n_dayints // 2
     miljm2 = np.full(n_kyr, np.nan)
@@ -887,7 +887,7 @@ def sommerhalbjahr(lat, ecc, obl, lpe, timeres=0.1, tottime=365.24, con=1361, ea
     irrs, _, _, _ = dailymeanwm2(lat=lat, sollon=sollons, ecc=ecc, obl=obl, lpe=lpe, con=con, earthshape=earthshape)
     ind = timeints > (270/365)*tottime
     irrs = np.vstack((irrs[ind, :], irrs[~ind, :]))
-    shjjm2 = jitloopsjh(irrs, timeres)
+    shjjm2 = jitloopshj(irrs, timeres)
 
     return shjjm2
 
