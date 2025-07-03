@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='orbitalchime',
-    version='0.1.4',
+    version='0.1.5',
     description='Calculating irradiance for Earth for various astronomical parameters.',
     author='Bryan C. Lougheed',
     author_email='bryan.lougheed@outlook.com',
