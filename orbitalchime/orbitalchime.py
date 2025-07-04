@@ -444,7 +444,7 @@ def time2sollon(time, ecc, lpe, tottime=365.24, obl=None, floatpp=64):
     """
     # convert input to numpy for speed and compatibility
     tottime = np.array([tottime])
-    time = time.reshape(-1,1)
+    time = np.atleast_1d(time).reshape(-1,1)
 
     # in case lpe is only one value
     lpe = np.atleast_1d(lpe)
@@ -769,7 +769,7 @@ def intradaywm2(lat, ecc, obl, lpe, dayint, daysinyear=365.242, con=1361.0):
     veq = 2*np.pi - omegabar  # v (true anomaly) of NH spring equinox relative to perihelion
     vx = veq + sunlon  # v (true anomaly) of inputted sunlon relative to perihelion
     vx[vx > 2*np.pi] -= 2*np.pi  # put back in 0-360 range
-    rx = (1 - ecc**2) / (1 + ecc * np.cos(vx))  # Eq. 30.3 in Meeus (1998)
+    rx = (1-ecc**2) / (1 + ecc*np.cos(vx))  # Eq. 30.3 in Meeus (1998)
 
     # Calculate tsi as function of con relative to 1 AU
     tsi = con * (1/rx)**2
@@ -780,9 +780,118 @@ def intradaywm2(lat, ecc, obl, lpe, dayint, daysinyear=365.242, con=1361.0):
 
     return irr, elev, msdhr, lashr, eot
 
-def thresholdjm2(thresh, lat, ecc, obl, lpe, timeres=0.1, tottime=365.24, con=1361, earthshape='sphere'):
+def lambdatolambda(lat, lambda1, lambda2, ecc, obl, lpe, dayres=0.1, totdays=365.2, con=1361, earthshape='sphere'):
     """
-    intirr, ndays = thresholdjm2(thresh, lat, ecc, obl, lpe, timeres=0.01, tottime=365.24, con=1361, earthshape='sphere')
+    lambdajm2, day1, day2 = lambda2lambda(lat, lambda1, lambda2, ecc, obl, lpe, dayres=0.1, totdays=365.2, con=1361, earthshape='sphere'):
+
+    Calculate integrated irradiation (J/m²) at top of atmosphere between two given solar longitudes (λ).
+    
+    Parameters
+    ----------
+    lat : float
+        Geocentric latitude (in radians, N is positive, negative for S) on Earth. Single value.
+    lambda1 : float
+        Solar longitude (λ, in radians) from which to start the integration. Single value.
+    lambda1 : float
+        Solar longitude (λ, in radians) at which to finish the integration. Single value.
+    ecc : ndarray
+        Eccentricity. Numerical value(s). 1D array.
+    obl : ndarray
+        Obliquity. Numerical value(s), radians. 1D array.
+    lpe : ndarray
+        heliocentric longitude of perihelion (from e.g., Laskar et al.)
+        omega (i.e., relative to NH autumn equinox) in radians.
+    dayres : float, optional
+        Mean solar day resolution for the integration. Default is 0.1.
+    totdays : float, optional
+        Total mean solar days in the tropical year. Default is 365.2.
+    con : float or array-like, optional
+        Solar constant. Single numerical value or 1D array, W/m2. Default is 1361.
+    earthshape : str (optional)
+        Shape of Earth, 'sphere' (default) or 'wgs84'.
+
+    Returns
+    -------
+    lambdajm2 : ndarray
+        Integrated irradiation (J/m2) at top of atmosphere between lambda1 and lambda2
+    day1 : ndarray
+        Mean solar day interval corresponding to lambda1
+    day2 : ndarray
+        Mean solar day interval corresponding to lambda2
+    """
+
+    day1, _ = sollon2time(lambda1, ecc, lpe, tottime=totdays)
+    day2, _ = sollon2time(lambda2, ecc, lpe, tottime=totdays)
+    lambdajm2 = np.full(ecc.shape, np.nan)
+    
+    # to do: make this loop more efficient and/or vectorised
+    for i in np.arange(ecc.size):
+        dayints = np.arange(day1[i],day2[i]+dayres,dayres)
+        sollons, _ = time2sollon(dayints, ecc[i], lpe[i], tottime=totdays)
+        lambdairr, _, _, _ = dailymeanwm2(lat=lat, sollon=sollons, ecc=ecc[i], obl=obl[i], lpe=lpe[i], con=con, earthshape=earthshape)
+        lambdajm2[i] = np.mean(lambdairr) * lambdairr.size * dayres * 24 * 60 * 60
+
+    return lambdajm2, day1, day2
+
+def daytoday(lat, day1, day2, ecc, obl, lpe, dayres=0.1, totdays=365.2, con=1361, earthshape='sphere'):
+    """
+    daysjm2, lambda1, lambda2 = daytoday(lat, day1, day2, ecc, obl, lpe, dayres=0.1, totdays=365.2, con=1361, earthshape='sphere')
+
+    Calculate integrated irradiation (J/m²) at top of atmosphere between two mean solar day values.
+    
+    Parameters
+    ----------
+    lat : float
+        Geocentric latitude (in radians, N is positive, negative for S) on Earth. Single value.
+    day1 : float
+        Mean solar day (or fraction thereof, e.g. 102.52) from which to start the integration. Single value.
+    day2 : float
+        Mean solar day (or fraction thereof, e.g. 202.52) from which to start the integration. Single value.
+    ecc : ndarray
+        Eccentricity. Numerical value(s). 1D array.
+    obl : ndarray
+        Obliquity. Numerical value(s), radians. 1D array.
+    lpe : ndarray
+        heliocentric longitude of perihelion (from e.g., Laskar et al.)
+        omega (i.e., relative to NH autumn equinox) in radians.
+    dayres : float, optional
+        Mean solar day resolution for the integration. Default is 0.1.
+    totdays : float, optional
+        Total mean solar days in the tropical year. Default is 365.2.
+    con : float or array-like, optional
+        Solar constant. Single numerical value or 1D array, W/m2. Default is 1361.
+    earthshape : str (optional)
+        Shape of Earth, 'sphere' (default) or 'wgs84'.
+
+    Returns
+    -------
+    daysjm2 : ndarray
+        Integrated irradiation (J/m2) at top of atmosphere between day1 and day2.
+    lambda1 : ndarray
+        Solar longitude (λ, in radians) corresponding to day1.
+    lambda2 : ndarray
+        Solar longitude (λ, in radians) corresponding to day2.
+    """
+
+    lambda1, _ = time2sollon(day1, ecc, lpe, tottime=totdays)
+    lambda2, _ = time2sollon(day2, ecc, lpe, tottime=totdays)
+    dayints = np.arange(day1,day2+dayres,dayres)
+    sollons, _ = time2sollon(dayints, ecc, lpe, tottime=totdays)
+    daysjm2 = np.full(ecc.shape, np.nan)
+
+    print(sollons.shape)
+    
+    # to do: make this loop more efficient and/or vectorised
+    for i in np.arange(ecc.size):      
+        daysirr, _, _, _ = dailymeanwm2(lat=lat, sollon=sollons[:,i], ecc=ecc[i], obl=obl[i], lpe=lpe[i], con=con, earthshape=earthshape)
+        daysjm2[i] = np.mean(daysirr) * daysirr.size * dayres * 24 * 60 * 60
+
+    return daysjm2, lambda1, lambda2
+
+
+def thresholdjm2(thresh, lat, ecc, obl, lpe, timeres=0.1, tottime=365.2, con=1361, earthshape='sphere'):
+    """
+    intirr, timethresh = thresholdjm2(thresh, lat, ecc, obl, lpe, timeres=0.1, tottime=365.24, con=1361, earthshape='sphere')
 
     Calculate integrated irradiation (J/m²) at top of atmosphere for all day intervals 
     exceeding a certain threshold in mean daily irradiance (W/m²).
@@ -804,7 +913,7 @@ def thresholdjm2(thresh, lat, ecc, obl, lpe, timeres=0.1, tottime=365.24, con=13
     timeres : float, optional
         Time resolution for the integration. Default is 0.1.
     tottime : float, optional
-        Total time in the tropical year. Default is 365.24.
+        Total time in the tropical year. Default is 365.2.
     con : float or array-like, optional
         Solar constant. Single numerical value or 1D array, W/m2. Default is 1361.
     earthshape : str (optional)
@@ -814,42 +923,42 @@ def thresholdjm2(thresh, lat, ecc, obl, lpe, timeres=0.1, tottime=365.24, con=13
     -------
     intirr : ndarray
         Integrated irradiation at top of atmosphere for days exceeding thresh. J/m2. Array same dimensions as ecc, obl, and lpe.
-    ndays : ndarray
-        Time (in days) exceeding thresh. Same dimensions as intirr.
+    timethresh : ndarray
+        Time exceeding thresh. Same dimensions as intirr.
     """
 
     timerange = np.arange(0, tottime, timeres)
-    intirr = np.full_like(ecc, np.nan)
-    ndays = np.full_like(ecc, np.nan)
+    threshjm2 = np.full_like(ecc, np.nan)
+    timethresh = np.full_like(ecc, np.nan)
 
-    # this loop can probably be made more efficient/vectorised
+    # to do: make this loop more efficient and/or vectorised
     for i in range(len(ecc)):
         sollons, _ = time2sollon(timerange, ecc[i], lpe[i], tottime)
         irrs, _, _, _ = dailymeanwm2(lat, sollons, ecc[i], obl[i], lpe[i], con=con, earthshape=earthshape)
-        ndays[i] = np.sum(irrs >= thresh) * timeres
-        intirr[i] = np.mean(irrs[irrs >= thresh]) * (ndays[i] * 24 * 60 * 60)  # W/m2 to J/m2s
+        timethresh[i] = np.sum(irrs >= thresh) * timeres
+        threshjm2[i] = np.mean(irrs[irrs >= thresh]) * (timethresh[i] * 24 * 60 * 60)  # W/m2 to J/m2
 
-    return intirr, ndays
+    return threshjm2, timethresh
 
 
 @njit(parallel=True)
 def jitloopshj(irrs, timeres):
-    n_dayints, n_kyr = irrs.shape
-    half_len = n_dayints // 2
-    miljm2 = np.full(n_kyr, np.nan)
+    nints, nkyr = irrs.shape
+    halfnints = nints // 2
+    shjjm2 = np.full(nkyr, np.nan)
 
-    for i in prange(n_kyr):
+    for i in prange(nkyr):
         col = irrs[:, i]
-        for j in range(1, n_dayints - half_len):
-            summer = col[j:j + half_len]
-            win_pre = col[:j]
-            win_post = col[j + half_len:]
-            win_max = max(np.max(win_pre), np.max(win_post))
+        for j in range(1, nints - halfnints):
+            summer = col[j:j + halfnints]
+            winpre = col[:j]
+            winpost = col[j + halfnints:]
+            winmax = max(np.max(winpre), np.max(winpost))
 
-            if np.min(summer) > win_max:
-                miljm2[i] = np.mean(summer) * half_len * timeres * 24 * 60 * 60
+            if np.min(summer) > winmax:
+                shjjm2[i] = np.mean(summer) * halfnints * timeres * 24 * 60 * 60 # W/m2 to J/m2
                 break
-    return miljm2
+    return shjjm2
 
 def sommerhalbjahr(lat, ecc, obl, lpe, timeres=0.1, tottime=365.24, con=1361, earthshape='sphere'):
     """
