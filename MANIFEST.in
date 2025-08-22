@@ -1,1 +1,2 @@
-recursive-include orbitalthebox/laskar_et_al *.*
+recursive-include orbitalchime/laskar_et_al *.*
+recursive-include orbitalchime/berger_and_loutre *.*
